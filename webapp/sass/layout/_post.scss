@@ -1203,17 +1203,6 @@
     }
 
     .post__permalink {
-<<<<<<< HEAD
-        color: #333;
-        &:hover, &:focus {
-            color: #333;
-        }
-        &:focus {
-            text-decoration: none;
-        }
-=======
-        color: inherit;
-
         &:hover,
         &:focus {
             color: inherit;
@@ -1223,7 +1212,6 @@
             text-decoration: none;
         }
 
->>>>>>> master
         &:hover {
             text-decoration: underline;
         }
