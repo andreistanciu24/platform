@@ -6,8 +6,10 @@ package api4
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/mattermost/platform/app"
 	"github.com/mattermost/platform/model"
 	"github.com/mattermost/platform/utils"
 )
@@ -131,6 +133,134 @@ func TestGetUser(t *testing.T) {
 	}
 }
 
+func TestGetUserByUsername(t *testing.T) {
+	th := Setup().InitBasic().InitSystemAdmin()
+	defer TearDown()
+	Client := th.Client
+
+	user := th.BasicUser
+
+	ruser, resp := Client.GetUserByUsername(user.Username, "")
+	CheckNoError(t, resp)
+	CheckUserSanitization(t, ruser)
+
+	if ruser.Email != user.Email {
+		t.Fatal("emails did not match")
+	}
+
+	ruser, resp = Client.GetUserByUsername(user.Username, resp.Etag)
+	CheckEtag(t, ruser, resp)
+
+	_, resp = Client.GetUserByUsername(GenerateTestUsername(), "")
+	CheckNotFoundStatus(t, resp)
+
+	_, resp = Client.GetUserByUsername(model.NewRandomString(1), "")
+	CheckBadRequestStatus(t, resp)
+
+	// Check against privacy config settings
+	emailPrivacy := utils.Cfg.PrivacySettings.ShowEmailAddress
+	namePrivacy := utils.Cfg.PrivacySettings.ShowFullName
+	defer func() {
+		utils.Cfg.PrivacySettings.ShowEmailAddress = emailPrivacy
+		utils.Cfg.PrivacySettings.ShowFullName = namePrivacy
+	}()
+	utils.Cfg.PrivacySettings.ShowEmailAddress = false
+	utils.Cfg.PrivacySettings.ShowFullName = false
+
+	ruser, resp = Client.GetUserByUsername(user.Username, "")
+	CheckNoError(t, resp)
+
+	if ruser.Email != "" {
+		t.Fatal("email should be blank")
+	}
+	if ruser.FirstName != "" {
+		t.Fatal("first name should be blank")
+	}
+	if ruser.LastName != "" {
+		t.Fatal("last name should be blank")
+	}
+
+	Client.Logout()
+	_, resp = Client.GetUserByUsername(user.Username, "")
+	CheckUnauthorizedStatus(t, resp)
+
+	// System admins should ignore privacy settings
+	ruser, resp = th.SystemAdminClient.GetUserByUsername(user.Username, resp.Etag)
+	if ruser.Email == "" {
+		t.Fatal("email should not be blank")
+	}
+	if ruser.FirstName == "" {
+		t.Fatal("first name should not be blank")
+	}
+	if ruser.LastName == "" {
+		t.Fatal("last name should not be blank")
+	}
+}
+
+func TestGetUserByEmail(t *testing.T) {
+	th := Setup().InitBasic().InitSystemAdmin()
+	defer TearDown()
+	Client := th.Client
+
+	user := th.CreateUser()
+
+	ruser, resp := Client.GetUserByEmail(user.Email, "")
+	CheckNoError(t, resp)
+	CheckUserSanitization(t, ruser)
+
+	if ruser.Email != user.Email {
+		t.Fatal("emails did not match")
+	}
+
+	ruser, resp = Client.GetUserByEmail(user.Email, resp.Etag)
+	CheckEtag(t, ruser, resp)
+
+	_, resp = Client.GetUserByEmail(GenerateTestUsername(), "")
+	CheckBadRequestStatus(t, resp)
+
+	_, resp = Client.GetUserByEmail(GenerateTestEmail(), "")
+	CheckNotFoundStatus(t, resp)
+
+	// Check against privacy config settings
+	emailPrivacy := utils.Cfg.PrivacySettings.ShowEmailAddress
+	namePrivacy := utils.Cfg.PrivacySettings.ShowFullName
+	defer func() {
+		utils.Cfg.PrivacySettings.ShowEmailAddress = emailPrivacy
+		utils.Cfg.PrivacySettings.ShowFullName = namePrivacy
+	}()
+	utils.Cfg.PrivacySettings.ShowEmailAddress = false
+	utils.Cfg.PrivacySettings.ShowFullName = false
+
+	ruser, resp = Client.GetUserByEmail(user.Email, "")
+	CheckNoError(t, resp)
+
+	if ruser.Email != "" {
+		t.Fatal("email should be blank")
+	}
+	if ruser.FirstName != "" {
+		t.Fatal("first name should be blank")
+	}
+	if ruser.LastName != "" {
+		t.Fatal("last name should be blank")
+	}
+
+	Client.Logout()
+	_, resp = Client.GetUserByEmail(user.Email, "")
+	CheckUnauthorizedStatus(t, resp)
+
+	// System admins should ignore privacy settings
+	ruser, resp = th.SystemAdminClient.GetUserByEmail(user.Email, resp.Etag)
+	if ruser.Email == "" {
+		t.Fatal("email should not be blank")
+	}
+	if ruser.FirstName == "" {
+		t.Fatal("first name should not be blank")
+	}
+	if ruser.LastName == "" {
+		t.Fatal("last name should not be blank")
+	}
+}
+
 func TestGetUsersByIds(t *testing.T) {
 	th := Setup().InitBasic()
 	Client := th.Client
@@ -219,10 +349,77 @@ func TestUpdateUser(t *testing.T) {
 	CheckNoError(t, resp)
 }
 
+func TestPatchUser(t *testing.T) {
+	th := Setup().InitBasic().InitSystemAdmin()
+	defer TearDown()
+	Client := th.Client
+
+	user := th.CreateUser()
+	Client.Login(user.Email, user.Password)
+
+	patch := &model.UserPatch{}
+
+	patch.Nickname = new(string)
+	*patch.Nickname = "Joram Wilander"
+	patch.FirstName = new(string)
+	*patch.FirstName = "Joram"
+	patch.LastName = new(string)
+	*patch.LastName = "Wilander"
+	patch.Position = new(string)
+
+	ruser, resp := Client.PatchUser(user.Id, patch)
+	CheckNoError(t, resp)
+	CheckUserSanitization(t, ruser)
+
+	if ruser.Nickname != "Joram Wilander" {
+		t.Fatal("Nickname did not update properly")
+	}
+	if ruser.FirstName != "Joram" {
+		t.Fatal("FirstName did not update properly")
+	}
+	if ruser.LastName != "Wilander" {
+		t.Fatal("LastName did not update properly")
+	}
+	if ruser.Position != "" {
+		t.Fatal("Position did not update properly")
+	}
+	if ruser.Username != user.Username {
+		t.Fatal("Username should not have updated")
+	}
+
+	_, resp = Client.PatchUser("junk", patch)
+	CheckBadRequestStatus(t, resp)
+
+	ruser.Id = model.NewId()
+	_, resp = Client.PatchUser(model.NewId(), patch)
+	CheckForbiddenStatus(t, resp)
+
+	if r, err := Client.DoApiPut("/users/"+user.Id+"/patch", "garbage"); err == nil {
+		t.Fatal("should have errored")
+	} else {
+		if r.StatusCode != http.StatusBadRequest {
+			t.Log("actual: " + strconv.Itoa(r.StatusCode))
+			t.Log("expected: " + strconv.Itoa(http.StatusBadRequest))
+			t.Fatal("wrong status code")
+		}
+	}
+
+	Client.Logout()
+	_, resp = Client.PatchUser(user.Id, patch)
+	CheckUnauthorizedStatus(t, resp)
+
+	th.LoginBasic()
+	_, resp = Client.PatchUser(user.Id, patch)
+	CheckForbiddenStatus(t, resp)
+
+	_, resp = th.SystemAdminClient.PatchUser(user.Id, patch)
+	CheckNoError(t, resp)
+}
+
 func TestDeleteUser(t *testing.T) {
 	th := Setup().InitBasic().InitSystemAdmin()
 	Client := th.Client
-	
+
 	user := th.BasicUser
 	th.LoginBasic()
 
@@ -231,7 +428,7 @@ func TestDeleteUser(t *testing.T) {
 	CheckForbiddenStatus(t, resp)
 
 	Client.Logout()
-	
+
 	_, resp = Client.DeleteUser(user.Id)
 	CheckUnauthorizedStatus(t, resp)
 
@@ -444,4 +641,164 @@ func TestGetUsersNotInChannel(t *testing.T) {
 
 	_, resp = th.SystemAdminClient.GetUsersNotInChannel(teamId, channelId, 0, 60, "")
 	CheckNoError(t, resp)
+}
+
+func TestUpdateUserPassword(t *testing.T) {
+	th := Setup().InitBasic().InitSystemAdmin()
+	defer TearDown()
+	Client := th.Client
+
+	password := "newpassword1"
+	pass, resp := Client.UpdateUserPassword(th.BasicUser.Id, th.BasicUser.Password, password)
+	CheckNoError(t, resp)
+
+	if !pass {
+		t.Fatal("should have returned true")
+	}
+
+	_, resp = Client.UpdateUserPassword(th.BasicUser.Id, password, "")
+	CheckBadRequestStatus(t, resp)
+
+	_, resp = Client.UpdateUserPassword(th.BasicUser.Id, password, "junk")
+	CheckBadRequestStatus(t, resp)
+
+	_, resp = Client.UpdateUserPassword("junk", password, password)
+	CheckBadRequestStatus(t, resp)
+
+	_, resp = Client.UpdateUserPassword(th.BasicUser.Id, "", password)
+	CheckBadRequestStatus(t, resp)
+
+	_, resp = Client.UpdateUserPassword(th.BasicUser.Id, "junk", password)
+	CheckBadRequestStatus(t, resp)
+
+	_, resp = Client.UpdateUserPassword(th.BasicUser.Id, password, th.BasicUser.Password)
+	CheckNoError(t, resp)
+
+	Client.Logout()
+	_, resp = Client.UpdateUserPassword(th.BasicUser.Id, password, password)
+	CheckUnauthorizedStatus(t, resp)
+
+	th.LoginBasic2()
+	_, resp = Client.UpdateUserPassword(th.BasicUser.Id, password, password)
+	CheckForbiddenStatus(t, resp)
+
+	th.LoginBasic()
+
+	// Test lockout
+	passwordAttempts := utils.Cfg.ServiceSettings.MaximumLoginAttempts
+	defer func() {
+		utils.Cfg.ServiceSettings.MaximumLoginAttempts = passwordAttempts
+	}()
+	utils.Cfg.ServiceSettings.MaximumLoginAttempts = 2
+
+	// Fail twice
+	_, resp = Client.UpdateUserPassword(th.BasicUser.Id, "badpwd", "newpwd")
+	CheckBadRequestStatus(t, resp)
+	_, resp = Client.UpdateUserPassword(th.BasicUser.Id, "badpwd", "newpwd")
+	CheckBadRequestStatus(t, resp)
+
+	// Should fail because account is locked out
+	_, resp = Client.UpdateUserPassword(th.BasicUser.Id, th.BasicUser.Password, "newpwd")
+	CheckErrorMessage(t, resp, "api.user.check_user_login_attempts.too_many.app_error")
+	CheckForbiddenStatus(t, resp)
+
+	// System admin can update another user's password
+	adminSetPassword := "pwdsetbyadmin"
+	pass, resp = th.SystemAdminClient.UpdateUserPassword(th.BasicUser.Id, "", adminSetPassword)
+	CheckNoError(t, resp)
+
+	if !pass {
+		t.Fatal("should have returned true")
+	}
+
+	_, resp = Client.Login(th.BasicUser.Email, adminSetPassword)
+	CheckNoError(t, resp)
+}
+
+func TestResetPassword(t *testing.T) {
+	th := Setup().InitBasic()
+	Client := th.Client
+
+	Client.Logout()
+
+	user := th.BasicUser
+
+	// Delete all the messages before check the reset password
+	utils.DeleteMailBox(user.Email)
+
+	success, resp := Client.SendPasswordResetEmail(user.Email)
+	CheckNoError(t, resp)
+	if !success {
+		t.Fatal("should have succeeded")
+	}
+
+	_, resp = Client.SendPasswordResetEmail("")
+	CheckBadRequestStatus(t, resp)
+
+	// Should not leak whether the email is attached to an account or not
+	success, resp = Client.SendPasswordResetEmail("notreal@example.com")
+	CheckNoError(t, resp)
+	if !success {
+		t.Fatal("should have succeeded")
+	}
+
+	var recovery *model.PasswordRecovery
+	if result := <-app.Srv.Store.PasswordRecovery().Get(user.Id); result.Err != nil {
+		t.Fatal(result.Err)
+	} else {
+		recovery = result.Data.(*model.PasswordRecovery)
+	}
+
+	// Check if the email was send to the right email address and the recovery key match
+	if resultsMailbox, err := utils.GetMailBox(user.Email); err != nil && !strings.ContainsAny(resultsMailbox[0].To[0], user.Email) {
+		t.Fatal("Wrong To recipient")
+	} else {
+		if resultsEmail, err := utils.GetMessageFromMailbox(user.Email, resultsMailbox[0].ID); err == nil {
+			if !strings.Contains(resultsEmail.Body.Text, recovery.Code) {
+				t.Log(resultsEmail.Body.Text)
+				t.Log(recovery.Code)
+				t.Fatal("Received wrong recovery code")
+			}
+		}
+	}
+
+	_, resp = Client.ResetPassword(recovery.Code, "")
+	CheckBadRequestStatus(t, resp)
+
+	_, resp = Client.ResetPassword(recovery.Code, "newp")
+	CheckBadRequestStatus(t, resp)
+
+	_, resp = Client.ResetPassword("", "newpwd")
+	CheckBadRequestStatus(t, resp)
+
+	_, resp = Client.ResetPassword("junk", "newpwd")
+	CheckBadRequestStatus(t, resp)
+
+	code := ""
+	for i := 0; i < model.PASSWORD_RECOVERY_CODE_SIZE; i++ {
+		code += "a"
+	}
+
+	_, resp = Client.ResetPassword(code, "newpwd")
+	CheckBadRequestStatus(t, resp)
+
+	success, resp = Client.ResetPassword(recovery.Code, "newpwd")
+	CheckNoError(t, resp)
+	if !success {
+		t.Fatal("should have succeeded")
+	}
+
+	Client.Login(user.Email, "newpwd")
+	Client.Logout()
+
+	_, resp = Client.ResetPassword(recovery.Code, "newpwd")
+	CheckBadRequestStatus(t, resp)
+
+	authData := model.NewId()
+	if result := <-app.Srv.Store.User().UpdateAuthData(user.Id, "random", &authData, "", true); result.Err != nil {
+		t.Fatal(result.Err)
+	}
+
+	_, resp = Client.SendPasswordResetEmail(user.Email)
+	CheckBadRequestStatus(t, resp)
 }
