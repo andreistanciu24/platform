@@ -5,6 +5,7 @@ package api4
 
 import (
 	"net/http"
+	"strconv"
 
 	l4g "github.com/alecthomas/log4go"
 	"github.com/mattermost/platform/app"
@@ -38,6 +39,7 @@ func InitUser() {
 	BaseRoutes.User.Handle("/sessions/revoke", ApiSessionRequired(revokeSession)).Methods("POST")
 	BaseRoutes.User.Handle("/audits", ApiSessionRequired(getAudits)).Methods("GET")
 
+	BaseRoutes.User.Handle("/mfa", ApiSessionRequired(checkMfa)).Methods("GET")
 }
 
 func createUser(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -549,4 +551,24 @@ func getAudits(c *Context, w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(audits.ToJson()))
 		return
 	}
+}
+
+func checkMfa(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireUserId()
+	if c.Err != nil {
+		return
+	}
+
+	var user *model.User
+	var err *model.AppError
+
+	if user, err = app.GetUser(c.Params.UserId); err != nil {
+		c.Err = err
+		return
+	}
+
+	rdata := map[string]string{}
+	rdata["mfa_required"] = strconv.FormatBool(user.MfaActive)
+
+	w.Write([]byte(model.MapToJson(rdata)))
 }

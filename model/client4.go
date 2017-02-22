@@ -813,3 +813,14 @@ func (c *Client4) GetIncomingWebhooksForTeam(teamId string, page int, perPage in
 		return IncomingWebhookListFromJson(r.Body), BuildResponse(r)
 	}
 }
+
+// Returns a map with key "mfa_required" with the string value "true" or "false"
+func (c *Client4) CheckMfa(userId string) ([]byte, *Response) {
+	if r, err := c.DoApiGet(c.GetUserRoute(userId) + "/mfa", ""); err != nil {
+		return nil, &Response{StatusCode: r.StatusCode, Error: err}
+	} else if data, err := ioutil.ReadAll(r.Body); err != nil {
+		return nil, &Response{StatusCode: r.StatusCode, Error: NewAppError("CheckMfa", "", nil, err.Error(), r.StatusCode)}
+	} else {
+		return data, BuildResponse(r)
+	}
+}

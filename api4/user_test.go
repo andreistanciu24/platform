@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"encoding/json"
 
 	"github.com/mattermost/platform/app"
 	"github.com/mattermost/platform/model"
@@ -923,4 +924,22 @@ func TestGetAudits(t *testing.T) {
 
 	_, resp = th.SystemAdminClient.GetAudits(user.Id, 0, 100, "")
 	CheckNoError(t, resp)
+}
+
+func TestCheckMfa(t *testing.T) {
+	th := Setup().InitBasic().InitSystemAdmin()
+	defer TearDown()
+	Client := th.Client
+	user := th.BasicUser
+
+	if result, err := Client.CheckMfa(user.Id); err != nil {
+		t.Fatal(err)
+	} else {
+		var f interface{};
+		json.Unmarshal(result, &f);
+		b := f.(map[string]interface{})
+		if b["mfa_required"] != "false" {
+			t.Fatal("mfa should not be required")
+		}
+	}
 }
