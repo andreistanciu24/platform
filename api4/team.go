@@ -25,6 +25,8 @@ func InitTeam() {
 	BaseRoutes.TeamByName.Handle("", ApiSessionRequired(getTeamByName)).Methods("GET")
 	BaseRoutes.TeamMember.Handle("", ApiSessionRequired(getTeamMember)).Methods("GET")
 	BaseRoutes.TeamMember.Handle("/roles", ApiSessionRequired(updateTeamMemberRoles)).Methods("PUT")
+
+	BaseRoutes.User.Handle("/teams/unread", ApiSessionRequired(getTeamsUnreadForUser)).Methods("GET")
 }
 
 func createTeam(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -100,6 +102,23 @@ func getTeamsForUser(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	} else {
 		w.Write([]byte(model.TeamListToJson(teams)))
+	}
+}
+
+func getTeamsUnreadForUser(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireUserId()
+	if c.Err != nil {
+		return
+	}
+
+	// optional team id to be excluded from the result
+	teamId := r.URL.Query().Get("id")
+
+	if UnreadTeamsList, err := app.GetTeamsUnreadForUser(teamId, c.Session.UserId); err != nil {
+		c.Err = err
+		return
+	} else {
+		w.Write([]byte(model.TeamsUnreadToJson(UnreadTeamsList)))
 	}
 }
 
